@@ -21,4 +21,4 @@ http://localhost/docs#/default
 
 ### Nota utilizada
 
-![](notas´fiscais/nota1.PNG) 
+![](notas-fiscais/nota1.PNG) 
