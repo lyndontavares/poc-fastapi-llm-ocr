@@ -17,8 +17,8 @@ http://localhost/docs#/default
 
 ## teste no swagger
 
-![](notas/teste.PNG)
+![](notas/teste1.PNG)
 
 ### Nota utilizada
 
-![](notas/teste.PNG)
+![](notas/nota1.PNG) 
