@@ -9,4 +9,7 @@ fastapi run app/main --port 80
 
 ## Swagger
 
+```
 http://localhost/docs#/default
+```
+
