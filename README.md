@@ -17,8 +17,18 @@ http://localhost/docs#/default
 
 ### teste no swagger
 
+<div align="center">
+
 ![](notas-fiscais/teste1.PNG)
+
+![](notas-fiscais/teste1b.PNG)
+
+</div>
 
 ### Nota utilizada
 
+<div align="center">
+
 ![](notas-fiscais/nota1.PNG) 
+
+</div>
