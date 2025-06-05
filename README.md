@@ -4,7 +4,7 @@ POC Fastapi com Gemini
 ## run
 
 ```
-fastapi run app/main --port 80
+fastapi run app/main.py --port 80
 ```
 
 ## Swagger
