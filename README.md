@@ -7,8 +7,18 @@ POC Fastapi com Gemini
 fastapi run app/main.py --port 80
 ```
 
-## Swagger
+## Acessar Swagger
 
 ```
 http://localhost/docs#/default
 ```
+
+## Teste
+
+## teste no swagger
+
+![](notas/teste.PNG)
+
+### Nota utilizada
+
+![](notas/teste.PNG)

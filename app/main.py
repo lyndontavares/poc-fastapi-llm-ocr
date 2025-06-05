@@ -134,18 +134,18 @@ async def extract_invoice_data(file: UploadFile = File(...)):
                 detail=f"Erro ao parsear a resposta do modelo. Resposta recebida: {raw_llm_response.strip()}"
             )
 
-        # Converte o valor_total para float se não for nulo
-        if 'valor_total' in json_data and json_data['valor_total'] is not None:
+        # Converte o valor para float se não for nulo
+        if 'valor' in json_data and json_data['valor'] is not None:
             try:
-                json_data['valor_total'] = float(json_data['valor_total'])
+                json_data['valor'] = float(json_data['valor'])
             except ValueError:
-                json_data['valor_total'] = None # Ou manter como string se a conversão falhar
+                json_data['valor'] = None # Ou manter como string se a conversão falhar
 
         # Cria a resposta com o modelo Pydantic, garantindo que os campos existam
         return InvoiceData(
             cnpj=json_data.get('cnpj'),
-            data_emissao=json_data.get('data_emissao'),
-            valor_total=json_data.get('valor_total')
+            data_emissao=json_data.get('data'),
+            valor_total=json_data.get('valor')
         )
 
     except Exception as e:
