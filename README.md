@@ -12,4 +12,3 @@ fastapi run app/main --port 80
 ```
 http://localhost/docs#/default
 ```
-
