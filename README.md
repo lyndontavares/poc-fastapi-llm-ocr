@@ -15,10 +15,10 @@ http://localhost/docs#/default
 
 ## Teste
 
-## teste no swagger
+### teste no swagger
 
-![](notas/teste1.PNG)
+![](notas-fiscais/teste1.PNG)
 
 ### Nota utilizada
 
-![](notas/nota1.PNG) 
+![](notas´fiscais/nota1.PNG) 
