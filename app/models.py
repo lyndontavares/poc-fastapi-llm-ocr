@@ -7,6 +7,11 @@ class STATUS(enum.Enum):
     PENDENTE = 1
     PROCESSADO = 2
 
+class Configurations(Base):
+    __tablename__ = 'configurations'
+    id = Column(Integer, primary_key=True)
+    prompt = Column(String(2048))
+
 class Item(Base):
     __tablename__ = 'items'
     id = Column(Integer, primary_key=True)

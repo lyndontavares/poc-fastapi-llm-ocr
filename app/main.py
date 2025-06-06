@@ -5,8 +5,8 @@ from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form
 import google.generativeai as genai
 from app.database import Base, engine, SessionLocal
 from sqlalchemy.orm import Session 
-from app.schemas import InvoiceRequest, InvoiceResponse, PromptRequest
-from app.models import Invoice
+from app.schemas import ConfigurationRequest, InvoiceRequest, InvoiceResponse, PromptRequest
+from app.models import Configurations, Invoice
 
 
 load_dotenv()
@@ -91,20 +91,41 @@ async def extract_invoice_data(file: UploadFile = File(...), session = Depends(g
 
         # Prompt de engenharia para extração de dados em JSON
         # É crucial pedir o formato JSON e instruir para usar 'null' se o dado não for encontrado.
-        prompt_parts = [
-            "Analise esta imagem de nota fiscal. Extraia as seguintes informações e formate-as como um objeto JSON. Se um dado não for encontrado, use `null`. Não adicione nenhum texto antes ou depois do JSON. Certifique-se de que o JSON é válido.",
-            "",
-            "```json",
-            "{",
-            "  \"cnpj\": \"[CNPJ da empresa emissora, apenas números]\",",
-            "  \"data\": \"[Data da emissão no formato DD/MM/AAAA]\",",
-            "  \"valor\": [Valor total psgo da nota fiscal, em formato numérico com ponto como separador decimal, ex: 123.45]",
-            "}",
-            "```",
-            "Imagem:",
-            image_parts[0] # Anexa a imagem aqui
-        ]
-        
+
+        itemObject = session.query(Configurations).get(1)
+
+        contexto = ""
+        if itemObject and itemObject.prompt:
+            contexto = [ itemObject.prompt ]
+        else:
+            contexto = [
+                "Analise esta imagem de nota fiscal. Extraia as seguintes informações e formate-as como um objeto JSON. Se um dado não for encontrado, use `null`. Não adicione nenhum texto antes ou depois do JSON. Certifique-se de que o JSON é válido.",
+                "",
+                "```json",
+                "{",
+                "  \"cnpj\": \"[CNPJ da empresa emissora, apenas números]\",",
+                "  \"data\": \"[Data da emissão no formato DD/MM/AAAA]\",",
+                "  \"valor\": [Valor total pago da nota fiscal, em formato numérico com ponto como separador decimal, ex: 123.45]",
+                "}",
+                "```",
+            ]
+
+        # prompt_parts = [
+        #     "Analise esta imagem de nota fiscal. Extraia as seguintes informações e formate-as como um objeto JSON. Se um dado não for encontrado, use `null`. Não adicione nenhum texto antes ou depois do JSON. Certifique-se de que o JSON é válido.",
+        #     "",
+        #     "```json",
+        #     "{",
+        #     "  \"cnpj\": \"[CNPJ da empresa emissora, apenas números]\",",
+        #     "  \"data\": \"[Data da emissão no formato DD/MM/AAAA]\",",
+        #     "  \"valor\": [Valor total psgo da nota fiscal, em formato numérico com ponto como separador decimal, ex: 123.45]",
+        #     "}",
+        #     "```",
+        #     "Imagem:",
+        #     image_parts[0] # Anexa a imagem aqui
+        # ]
+
+        prompt_parts =  ["Analise esta imagem de nota fiscal. Extraia as seguintes informações e formate-as como um objeto JSON. Se um dado não for encontrado, use `null`. Não adicione nenhum texto antes ou depois do JSON. Certifique-se de que o JSON é válido: {""cnpj"":[CNPJ da empresa emissora, apenas números], ""data"":[Data da emissão no formato DD/MM/AAAA], ""valor"":[Valor total pago da nota fiscal, em formato numérico com ponto como separador decimal, ex: 123.45]} ", "Imagem:", image_parts[0] ]
+ 
         # Gera o conteúdo
         response = model_vision.generate_content(prompt_parts)
         
@@ -191,6 +212,15 @@ def update_invoice(id:int, invoice:InvoiceRequest, session = Depends(get_session
     itemObject.valor_total = invoice.valor_total 
     itemObject.status = invoice.status 
     session.commit()
+    return itemObject
+
+@app.put("/configurations")
+def update_configurations(config:ConfigurationRequest, session = Depends(get_session)):
+    """
+    Atualiza um documento parcialmente.
+    """
+    itemObject = session.query(Configurations).get(1)
+    itemObject.prompt = config.prompt 
     return itemObject
 
 @app.delete("/invoices/{id}")

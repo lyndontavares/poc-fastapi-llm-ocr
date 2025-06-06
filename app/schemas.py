@@ -4,6 +4,9 @@ from pydantic import BaseModel
 class PromptRequest(BaseModel):
     prompt: str
 
+class ConfigurationRequest(BaseModel):
+    prompt: str
+
 # --- Dados de Nota Fiscal ---
 class InvoiceResponse(BaseModel):
     id: int | None = None
