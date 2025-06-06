@@ -13,4 +13,4 @@ settings.cfg
 *.cache
 .DS_Store
 .env
-/app/*.db
+app/*.db
