@@ -1,0 +1,40 @@
+# .devcontainer/docker-compose.yml
+version: '3.8'
+
+services:
+  # Serviço para sua aplicação FastAPI
+  app:
+    build:
+      context: ../ # Constrói a partir da pasta raiz do seu projeto (onde está o main.py)
+      dockerfile: Dockerfile # Opcional: se você tiver um Dockerfile específico para sua app
+    volumes:
+      - ..:/workspace:cached # Monta a pasta raiz do seu projeto no /workspace dentro do container
+    ports:
+      - "8000:8000" # Mapeia a porta do FastAPI
+    depends_on:
+      - mongodb # Garante que o MongoDB inicie antes da sua aplicação
+    environment: # Variáveis de ambiente que sua app pode usar
+      # A URI do MongoDB deve apontar para o nome do serviço 'mongodb'
+      MONGODB_URI: "mongodb://mongodb:27017/" # Use o nome do serviço 'mongodb' como hostname
+      MONGODB_DATABASE_NAME: "notasfiscais_db"
+      MONGODB_COLLECTION_NAME: "dados_notas"
+      # Não coloque sua GOOGLE_API_KEY aqui diretamente em produção!
+      # Use um gerenciador de segredos ou injete-a de outra forma.
+      # Para desenvolvimento local no dev container, pode ser útil.
+      # GOOGLE_API_KEY: "SUA_CHAVE_DA_API_GOOGLE_AQUI"
+
+  # Serviço para o banco de dados MongoDB
+  mongodb:
+    image: mongo:6.0 # Use uma versão específica para estabilidade (ex: mongo:6.0, mongo:latest)
+    ports:
+      - "27017:27017" # Mapeia a porta padrão do MongoDB
+    volumes:
+      - mongodb_data:/data/db # Persiste os dados do MongoDB em um volume nomeado
+    environment:
+      # Opcional: Defina usuário e senha para o MongoDB se precisar (remova para setup simples)
+      # MONGO_INITDB_ROOT_USERNAME: user
+      # MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_DATABASE: notasfiscais_db # Define o banco de dados inicial (opcional)
+
+volumes:
+  mongodb_data: # Define o volume nomeado para persistência dos dados do MongoDB

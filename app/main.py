@@ -1,21 +1,17 @@
 import os
-from typing import Union
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form  
-from pydantic import BaseModel
-import google.generativeai as genai
 from dotenv import load_dotenv
 import json
+from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form  
+import google.generativeai as genai
+from app.database import Base, engine, SessionLocal
+from sqlalchemy.orm import Session 
+from app.schemas import InvoiceRequest, InvoiceResponse, PromptRequest
+from app.models import Invoice
+
 
 load_dotenv()
 
-app = FastAPI()
-
 # --- Configuração do Google Gemini API ---
-# É ALTAMENTE RECOMENDADO usar variáveis de ambiente para sua API Key
-# Exemplo (Linux/macOS): export GOOGLE_API_KEY="SUA_CHAVE_AQUI"
-# Exemplo (Windows CMD): set GOOGLE_API_KEY="SUA_CHAVE_AQUI"
-# Exemplo (Windows PowerShell): $env:GOOGLE_API_KEY="SUA_CHAVE_AQUI"
-# Ou coloque diretamente, mas NÃO faça isso em produção:
 # API_KEY = "SUA_CHAVE_DA_API_GOOGLE_AQUI"
 API_KEY = os.getenv("GOOGLE_API_KEY")
 
@@ -29,11 +25,19 @@ genai.configure(api_key=API_KEY)
 GEMINI_MODEL = "gemini-2.0-flash"
 GEMINI_PRO_VISION_MODEL = "gemini-1.5-flash" # Modelo para processamento de imagem  gemini-pro-vision gemini-1.5-flash
 
+Base.metadata.create_all(engine)
+def get_session():
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
 
-
-# --- Modelo Pydantic para o corpo da requisição ---
-class PromptRequest(BaseModel):
-    prompt: str
+app = FastAPI(
+    title="API Fastapi Gemini",
+    description="Endpoints para enviar prompts, obter respostas do modelo Google Gemini e extrair/persistir dados de imagens de notas fiscais.",
+    version="1.0.0"
+)
 
 # --- Endpoint da API ---
 @app.post("/chat")
@@ -63,15 +67,9 @@ async def chat_with_gemini(request: PromptRequest):
             detail=f"Erro ao interagir com o modelo Gemini: {str(e)}"
         )
 
-# --- NOVO ENDPOINT: Extração de Dados de Nota Fiscal ---
-class InvoiceData(BaseModel):
-    cnpj: str | None = None
-    data_emissao: str | None = None
-    valor_total: float | None = None
-    observacao: str = "Dados extraídos. A precisão depende da qualidade da imagem e do modelo LLM."
-
-@app.post("/extract-invoice-data", response_model=InvoiceData)
-async def extract_invoice_data(file: UploadFile = File(...)):
+# --- Endpoint da API ---
+@app.post("/invoices/extract" ) # , response_model=InvoiceResponse
+async def extract_invoice_data(file: UploadFile = File(...), session = Depends(get_session)):
     """
     Recebe uma imagem de nota fiscal, extrai CNPJ, data e valor total.
     """
@@ -142,20 +140,66 @@ async def extract_invoice_data(file: UploadFile = File(...)):
                 json_data['valor'] = None # Ou manter como string se a conversão falhar
 
         # Cria a resposta com o modelo Pydantic, garantindo que os campos existam
-        return InvoiceData(
+
+        invoiceResponse =  InvoiceResponse(
             cnpj=json_data.get('cnpj'),
             data_emissao=json_data.get('data'),
-            valor_total=json_data.get('valor')
+            valor_total=json_data.get('valor'),
+            status="PENDENTE"
         )
 
+        # persistência
+
+        invoiceNew = Invoice(cnpj=invoiceResponse.cnpj, data_emissao=invoiceResponse.data_emissao, valor_total=invoiceResponse.valor_total)
+        session.add(invoiceNew)
+        session.commit()
+        session.refresh(invoiceNew)
+
+        return invoiceResponse
+    
     except Exception as e:
         raise HTTPException(
             status_code=500, 
             detail=f"Erro ao processar a imagem da nota fiscal: {str(e)}"
         )
 
+ 
+@app.get("/invoices")
+def get_invoices(session: Session = Depends(get_session)):
+    """
+    Retorna lista de documentos extraidos.
+    """
+    items = session.query(Invoice).all()
+    return items
 
-@app.get("/")
-def read_root():
-    return {"Hello": "World"}
+@app.get("/invoices/{id}")
+def get_invoices(id:int, session: Session = Depends(get_session)):
+    """
+    Retorna um documento a parti do id.
+    """
+    item = session.query(Invoice).get(id)
+    return item
 
+@app.put("/invoices/{id}")
+def update_invoice(id:int, invoice:InvoiceRequest, session = Depends(get_session)):
+    """
+    Atualiza um documento parcialmente.
+    """
+    itemObject = session.query(Invoice).get(id)
+    itemObject.cnpj = invoice.cnpj 
+    itemObject.data_emissao = invoice.data_emissao 
+    itemObject.valor_total = invoice.valor_total 
+    itemObject.status = invoice.status 
+    session.commit()
+    return itemObject
+
+@app.delete("/invoices/{id}")
+def delete_invoice(id:int, session = Depends(get_session)):
+    """
+    Exclue um documento a partir do ID.
+    """
+    itemObject = session.query(Invoice).get(id)
+    session.delete(itemObject)
+    session.commit()
+    session.close()
+    return 'Item was deleted'
