@@ -7,7 +7,8 @@ from app.database import Base, engine, SessionLocal
 from sqlalchemy.orm import Session 
 from app.schemas import ConfigurationRequest, ConfigurationResponse, InvoiceRequest, InvoiceResponse, PromptRequest
 from app.models import Configurations, Invoice
-import logging # <-- Import logging
+import logging
+from app.hash_util import gerar_hash_imagem # <-- Import logging
 
 # --- Logging Setup ---
 logger = logging.getLogger(__name__)
@@ -35,7 +36,6 @@ def get_session():
         yield session
     finally:
         session.close()
-
 
 app = FastAPI(
     title="API Fastapi Gemini",
@@ -106,41 +106,17 @@ async def extract_invoice_data_with_gemini(file: UploadFile = File(...), session
         # Prompt de engenharia para extração de dados em JSON
         # É crucial pedir o formato JSON e instruir para usar 'null' se o dado não for encontrado.
 
-        itemObject = session.query(Configurations).all()
+        itemObject = session.query(Configurations).first()
 
-        logger.warning(f"Conf: { itemObject}")
-
-        contexto = ""
+        prompt = ""
         if itemObject and itemObject.prompt:
-            contexto = [ itemObject.prompt ]
+            logger.warning("usando config...")
+            prompt = itemObject.prompt
         else:
-            contexto = [
-                "Analise esta imagem de nota fiscal. Extraia as seguintes informações e formate-as como um objeto JSON. Se um dado não for encontrado, use `null`. Não adicione nenhum texto antes ou depois do JSON. Certifique-se de que o JSON é válido.",
-                "",
-                "```json",
-                "{",
-                "  \"cnpj\": \"[CNPJ da empresa emissora, apenas números]\",",
-                "  \"data\": \"[Data da emissão no formato DD/MM/AAAA]\",",
-                "  \"valor\": [Valor total pago da nota fiscal, em formato numérico com ponto como separador decimal, ex: 123.45]",
-                "}",
-                "```",
-            ]
-
-        # prompt_parts = [
-        #     "Analise esta imagem de nota fiscal. Extraia as seguintes informações e formate-as como um objeto JSON. Se um dado não for encontrado, use `null`. Não adicione nenhum texto antes ou depois do JSON. Certifique-se de que o JSON é válido.",
-        #     "",
-        #     "```json",
-        #     "{",
-        #     "  \"cnpj\": \"[CNPJ da empresa emissora, apenas números]\",",
-        #     "  \"data\": \"[Data da emissão no formato DD/MM/AAAA]\",",
-        #     "  \"valor\": [Valor total psgo da nota fiscal, em formato numérico com ponto como separador decimal, ex: 123.45]",
-        #     "}",
-        #     "```",
-        #     "Imagem:",
-        #     image_parts[0] # Anexa a imagem aqui
-        # ]
-
-        prompt_parts =  ["Analise esta imagem de nota fiscal. Extraia as seguintes informações e formate-as como um objeto JSON. Se um dado não for encontrado, use `null`. Não adicione nenhum texto antes ou depois do JSON. Certifique-se de que o JSON é válido: {\"cnpj\":[CNPJ da empresa emissora, apenas números], \"data\":[Data da emissão no formato DD/MM/AAAA], \"valor\":[Valor total pago da nota fiscal, em formato numérico com ponto como separador decimal, ex: 123.45]} ", "Imagem:", image_parts[0] ]
+            prompt = "Analise esta imagem de nota fiscal. Extraia as seguintes informações e formate-as como um objeto JSON. Se um dado não for encontrado, use `null`. Não adicione nenhum texto antes ou depois do JSON. Certifique-se de que o JSON é válido: {\"cnpj\":[CNPJ da empresa emissora, apenas números], \"data\":[Data da emissão no formato DD/MM/AAAA], \"valor\":[Valor total pago da nota fiscal, em formato numérico com ponto como separador decimal, ex: 123.45]} "
+            logger.warning("usando default...")
+           
+        prompt_parts =  [prompt, "Imagem:", image_parts[0] ]
  
         # Gera o conteúdo
         response = model_vision.generate_content(prompt_parts)
@@ -175,24 +151,32 @@ async def extract_invoice_data_with_gemini(file: UploadFile = File(...), session
                 json_data['valor'] = float(json_data['valor'])
             except ValueError:
                 json_data['valor'] = None # Ou manter como string se a conversão falhar
+        
+        # gera hash imagem
+        hash = gerar_hash_imagem(image_data)
+ 
+ 
+        # persistência
+        
+        #logger.warning("Verificando Hash existe: "+hash)
+        encontrou = session.query(Invoice).filter_by(imagem_hash=hash).all()
+        #logger.warning(encontrou)
+        
+        if encontrou:
+            raise HTTPException(status_code=400, detail="O arquivo enviado já está cadastrado.")
 
-        # Cria a resposta com o modelo Pydantic, garantindo que os campos existam
-
-        invoiceResponse =  InvoiceResponse(
-            cnpj=json_data.get('cnpj'),
-            data_emissao=json_data.get('data'),
+        invoiceNew = Invoice(
+            cnpj=json_data.get('cnpj'), 
+            data_emissao=json_data.get('data'), 
             valor_total=json_data.get('valor'),
-            status="PENDENTE"
+            imagem_hash=hash
         )
 
-        # persistência
-
-        invoiceNew = Invoice(cnpj=invoiceResponse.cnpj, data_emissao=invoiceResponse.data_emissao, valor_total=invoiceResponse.valor_total)
         session.add(invoiceNew)
         session.commit()
         session.refresh(invoiceNew)
 
-        return invoiceResponse
+        return invoiceNew
     
     except Exception as e:
         raise HTTPException(
@@ -211,7 +195,7 @@ def get_invoices(session: Session = Depends(get_session)):
     return items
 
 @app.get("/invoices/{id}",tags=["Crud"])
-def get_invoices(id:int, session: Session = Depends(get_session)):
+def get_invoice(id:int, session: Session = Depends(get_session)):
     """
     Retorna um documento a parti do id.
     """
@@ -245,7 +229,7 @@ def delete_invoice(id:int, session = Depends(get_session)):
 
 
 @app.put("/configuration",tags=["Configuração"])
-def update_configurations(config:ConfigurationRequest, session = Depends(get_session)):
+def update_configuration(config:ConfigurationRequest, session = Depends(get_session)):
     """
     Atualiza Prompt de extração de dados.
     """
@@ -263,7 +247,7 @@ def update_configurations(config:ConfigurationRequest, session = Depends(get_ses
     return configUpdated
 
 @app.get("/configuration",tags=["Configuração"])
-def get_configurations(session = Depends(get_session)):
+def get_configuration(session = Depends(get_session)):
     """
     Retorna prompt de extração de dados.
     """
