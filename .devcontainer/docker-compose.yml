@@ -9,8 +9,8 @@ services:
       dockerfile: Dockerfile # Opcional: se você tiver um Dockerfile específico para sua app
     volumes:
       - ..:/workspace:cached # Monta a pasta raiz do seu projeto no /workspace dentro do container
-    ports:
-      - "8000:8000" # Mapeia a porta do FastAPI
+    #ports:
+    #  - "8000:8000" # Mapeia a porta do FastAPI
     depends_on:
       - mongodb # Garante que o MongoDB inicie antes da sua aplicação
     environment: # Variáveis de ambiente que sua app pode usar

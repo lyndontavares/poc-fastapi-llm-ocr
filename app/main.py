@@ -5,9 +5,12 @@ from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form
 import google.generativeai as genai
 from app.database import Base, engine, SessionLocal
 from sqlalchemy.orm import Session 
-from app.schemas import ConfigurationRequest, InvoiceRequest, InvoiceResponse, PromptRequest
+from app.schemas import ConfigurationRequest, ConfigurationResponse, InvoiceRequest, InvoiceResponse, PromptRequest
 from app.models import Configurations, Invoice
+import logging # <-- Import logging
 
+# --- Logging Setup ---
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -33,14 +36,15 @@ def get_session():
     finally:
         session.close()
 
+
 app = FastAPI(
     title="API Fastapi Gemini",
     description="Endpoints para enviar prompts, obter respostas do modelo Google Gemini e extrair/persistir dados de imagens de notas fiscais.",
     version="1.0.0",
     openapi_tags=[
     {
-        "name": "Operações",
-        "description": "Operações da API de extraçõ de dados.",
+        "name": "Interação com LLM",
+        "description": "Interação com LLM.",
     },
     {
          "name": "Crud",
@@ -49,7 +53,7 @@ app = FastAPI(
 )
 
 # --- Endpoint da API ---
-@app.post("/chat",tags=["Operações"])
+@app.post("/chat",tags=["Interação com LLM"])
 async def chat_with_gemini(request: PromptRequest):
     """
     Recebe um prompt de texto, interage com o modelo Google Gemini e retorna a resposta.
@@ -77,11 +81,12 @@ async def chat_with_gemini(request: PromptRequest):
         )
 
 # --- Endpoint da API ---
-@app.post("/invoices/extract" ,tags=["Operações"]) # , response_model=InvoiceResponse
-async def extract_invoice_data(file: UploadFile = File(...), session = Depends(get_session)):
+@app.post("/invoices/extract" ,tags=["Interação com LLM"]) # , response_model=InvoiceResponse
+async def extract_invoice_data_with_gemini(file: UploadFile = File(...), session = Depends(get_session)):
     """
     Recebe uma imagem de nota fiscal, extrai CNPJ, data e valor total.
     """
+
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="O arquivo enviado não é uma imagem.")
 
@@ -101,7 +106,9 @@ async def extract_invoice_data(file: UploadFile = File(...), session = Depends(g
         # Prompt de engenharia para extração de dados em JSON
         # É crucial pedir o formato JSON e instruir para usar 'null' se o dado não for encontrado.
 
-        itemObject = session.query(Configurations).get(1)
+        itemObject = session.query(Configurations).all()
+
+        logger.warning(f"Conf: { itemObject}")
 
         contexto = ""
         if itemObject and itemObject.prompt:
@@ -200,6 +207,7 @@ def get_invoices(session: Session = Depends(get_session)):
     Retorna lista de documentos extraidos.
     """
     items = session.query(Invoice).all()
+
     return items
 
 @app.get("/invoices/{id}",tags=["Crud"])
@@ -223,25 +231,6 @@ def update_invoice(id:int, invoice:InvoiceRequest, session = Depends(get_session
     session.commit()
     return itemObject
 
-@app.put("/configurations",tags=["Crud"])
-def update_configurations(config:ConfigurationRequest, session = Depends(get_session)):
-    """
-    Atualiza Prompt de extração de dados.
-    """
-    itemObject = session.query(Configurations).get(1)
-    if itemObject:
-        itemObject.prompt = config.prompt 
-    else:   
-        itemObject = Configurations(prompt=config.prompt)
-    session.commit()
-    return itemObject
-@app.get("/configurations",tags=["Crud"])
-def get_configurations(session = Depends(get_session)):
-    """
-    Retorna prompt de extração de dados.
-    """
-    itemObject = session.query(Configurations).all()
-    return itemObject
 
 @app.delete("/invoices/{id}",tags=["Crud"])
 def delete_invoice(id:int, session = Depends(get_session)):
@@ -252,5 +241,35 @@ def delete_invoice(id:int, session = Depends(get_session)):
     session.delete(itemObject)
     session.commit()
     session.close()
-    return 'Item was deleted'
+    return 'Documento removido permanentemente.'
+
+
+@app.put("/configuration",tags=["Configuração"])
+def update_configurations(config:ConfigurationRequest, session = Depends(get_session)):
+    """
+    Atualiza Prompt de extração de dados.
+    """
+    configUpdated = session.query(Configurations).first()
+
+    if configUpdated:
+        configUpdated.prompt = config.prompt 
+    else:   
+        configUpdated = Configurations(prompt=config.prompt)
+
+    session.add(configUpdated)
+    session.commit()
+    session.refresh(configUpdated)
+
+    return configUpdated
+
+@app.get("/configuration",tags=["Configuração"])
+def get_configurations(session = Depends(get_session)):
+    """
+    Retorna prompt de extração de dados.
+    """
+    config = session.query(Configurations).first()
+    #configResponse = ConfigurationResponse(prompt=config.prompt)
+    #session.close()
+
+    return config
 

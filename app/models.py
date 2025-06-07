@@ -25,7 +25,7 @@ class Invoice(Base):
     data_emissao = Column(String(10))
     valor_total = Column(String(64))
     status = Column(String(10),default="PENDENTE") # PENDENTE / CONFERIDO
-    imagem_hash = Column(String, unique=True)
+    #imagem_hash = Column(String, unique=True)
 
 
 # https://dennisivy.com/fast-api-crud

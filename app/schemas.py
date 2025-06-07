@@ -7,6 +7,9 @@ class PromptRequest(BaseModel):
 class ConfigurationRequest(BaseModel):
     prompt: str
 
+class ConfigurationResponse(BaseModel):
+    prompt: str
+
 # --- Dados de Nota Fiscal ---
 class InvoiceResponse(BaseModel):
     id: int | None = None
