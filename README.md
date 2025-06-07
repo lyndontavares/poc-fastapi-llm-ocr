@@ -7,6 +7,12 @@ POC Fastapi com Gemini
 fastapi run app/main.py --port 80
 ```
 
+## Live reload
+
+```
+ uvicorn app.main:app --reload
+```
+
 ## Acessar Swagger
 
 ```
