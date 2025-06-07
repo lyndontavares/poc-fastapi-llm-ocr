@@ -36,11 +36,20 @@ def get_session():
 app = FastAPI(
     title="API Fastapi Gemini",
     description="Endpoints para enviar prompts, obter respostas do modelo Google Gemini e extrair/persistir dados de imagens de notas fiscais.",
-    version="1.0.0"
+    version="1.0.0",
+    openapi_tags=[
+    {
+        "name": "Operações",
+        "description": "Operações da API de extraçõ de dados.",
+    },
+    {
+         "name": "Crud",
+         "description": "Operações de CRUD.",
+    }]
 )
 
 # --- Endpoint da API ---
-@app.post("/chat")
+@app.post("/chat",tags=["Operações"])
 async def chat_with_gemini(request: PromptRequest):
     """
     Recebe um prompt de texto, interage com o modelo Google Gemini e retorna a resposta.
@@ -68,7 +77,7 @@ async def chat_with_gemini(request: PromptRequest):
         )
 
 # --- Endpoint da API ---
-@app.post("/invoices/extract" ) # , response_model=InvoiceResponse
+@app.post("/invoices/extract" ,tags=["Operações"]) # , response_model=InvoiceResponse
 async def extract_invoice_data(file: UploadFile = File(...), session = Depends(get_session)):
     """
     Recebe uma imagem de nota fiscal, extrai CNPJ, data e valor total.
@@ -124,7 +133,7 @@ async def extract_invoice_data(file: UploadFile = File(...), session = Depends(g
         #     image_parts[0] # Anexa a imagem aqui
         # ]
 
-        prompt_parts =  ["Analise esta imagem de nota fiscal. Extraia as seguintes informações e formate-as como um objeto JSON. Se um dado não for encontrado, use `null`. Não adicione nenhum texto antes ou depois do JSON. Certifique-se de que o JSON é válido: {""cnpj"":[CNPJ da empresa emissora, apenas números], ""data"":[Data da emissão no formato DD/MM/AAAA], ""valor"":[Valor total pago da nota fiscal, em formato numérico com ponto como separador decimal, ex: 123.45]} ", "Imagem:", image_parts[0] ]
+        prompt_parts =  ["Analise esta imagem de nota fiscal. Extraia as seguintes informações e formate-as como um objeto JSON. Se um dado não for encontrado, use `null`. Não adicione nenhum texto antes ou depois do JSON. Certifique-se de que o JSON é válido: {\"cnpj\":[CNPJ da empresa emissora, apenas números], \"data\":[Data da emissão no formato DD/MM/AAAA], \"valor\":[Valor total pago da nota fiscal, em formato numérico com ponto como separador decimal, ex: 123.45]} ", "Imagem:", image_parts[0] ]
  
         # Gera o conteúdo
         response = model_vision.generate_content(prompt_parts)
@@ -185,7 +194,7 @@ async def extract_invoice_data(file: UploadFile = File(...), session = Depends(g
         )
 
  
-@app.get("/invoices")
+@app.get("/invoices",tags=["Crud"])
 def get_invoices(session: Session = Depends(get_session)):
     """
     Retorna lista de documentos extraidos.
@@ -193,7 +202,7 @@ def get_invoices(session: Session = Depends(get_session)):
     items = session.query(Invoice).all()
     return items
 
-@app.get("/invoices/{id}")
+@app.get("/invoices/{id}",tags=["Crud"])
 def get_invoices(id:int, session: Session = Depends(get_session)):
     """
     Retorna um documento a parti do id.
@@ -201,7 +210,7 @@ def get_invoices(id:int, session: Session = Depends(get_session)):
     item = session.query(Invoice).get(id)
     return item
 
-@app.put("/invoices/{id}")
+@app.put("/invoices/{id}",tags=["Crud"])
 def update_invoice(id:int, invoice:InvoiceRequest, session = Depends(get_session)):
     """
     Atualiza um documento parcialmente.
@@ -214,16 +223,27 @@ def update_invoice(id:int, invoice:InvoiceRequest, session = Depends(get_session
     session.commit()
     return itemObject
 
-@app.put("/configurations")
+@app.put("/configurations",tags=["Crud"])
 def update_configurations(config:ConfigurationRequest, session = Depends(get_session)):
     """
-    Atualiza um documento parcialmente.
+    Atualiza Prompt de extração de dados.
     """
     itemObject = session.query(Configurations).get(1)
-    itemObject.prompt = config.prompt 
+    if itemObject:
+        itemObject.prompt = config.prompt 
+    else:   
+        itemObject = Configurations(prompt=config.prompt)
+    session.commit()
+    return itemObject
+@app.get("/configurations",tags=["Crud"])
+def get_configurations(session = Depends(get_session)):
+    """
+    Retorna prompt de extração de dados.
+    """
+    itemObject = session.query(Configurations).all()
     return itemObject
 
-@app.delete("/invoices/{id}")
+@app.delete("/invoices/{id}",tags=["Crud"])
 def delete_invoice(id:int, session = Depends(get_session)):
     """
     Exclue um documento a partir do ID.
@@ -233,3 +253,4 @@ def delete_invoice(id:int, session = Depends(get_session)):
     session.commit()
     session.close()
     return 'Item was deleted'
+
