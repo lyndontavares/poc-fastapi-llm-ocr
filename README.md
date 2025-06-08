@@ -19,6 +19,14 @@ fastapi run app/main.py --port 80
 http://localhost/docs#/default
 ```
 
+## API Swagger
+
+<div align="center">
+
+![](notas-fiscais/api.png)
+
+</div>
+
 ## Teste
 
 ### teste no swagger
