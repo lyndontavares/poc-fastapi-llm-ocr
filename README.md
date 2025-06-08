@@ -1,5 +1,5 @@
 # poc-fastapi-llm
-POC Fastapi com Gemini
+POC Fastapi com Gemini. Criado para o segundo trabalho do curso da I1A2 em Junho de 2025.
 
 ## Run
 
