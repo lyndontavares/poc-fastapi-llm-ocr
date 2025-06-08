@@ -9,6 +9,7 @@ from app.schemas import ConfigurationRequest, ConfigurationResponse, InvoiceRequ
 from app.models import Configurations, Invoice
 import logging
 from app.hash_util import gerar_hash_imagem # <-- Import logging
+from fastapi.middleware.cors import CORSMiddleware
 
 # --- Logging Setup ---
 logger = logging.getLogger(__name__)
@@ -37,9 +38,13 @@ def get_session():
     finally:
         session.close()
 
+origins = [
+        "http://localhost:4200",  # frontend URL
+]
+
 app = FastAPI(
-    title="API Fastapi Gemini",
-    description="Endpoints para enviar prompts, obter respostas do modelo Google Gemini e extrair/persistir dados de imagens de notas fiscais.",
+    title="API METAMIND - Extração Inteligente ",
+    description="Extração inteligente de dados.",
     version="1.0.0",
     openapi_tags=[
     {
@@ -50,6 +55,14 @@ app = FastAPI(
          "name": "Crud",
          "description": "Operações de CRUD.",
     }]
+)
+
+app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        #allow_credentials=True,
+        allow_methods=["*"],  # Allows all HTTP methods
+        allow_headers=["*"],  # Allows all headers
 )
 
 # --- Endpoint da API ---
@@ -81,12 +94,26 @@ async def chat_with_gemini(request: PromptRequest):
         )
 
 # --- Endpoint da API ---
-@app.post("/invoices/extract" ,tags=["Interação com LLM"]) # , response_model=InvoiceResponse
-async def extract_invoice_data_with_gemini(file: UploadFile = File(...), session = Depends(get_session)):
+
+@app.post("/invoices/extract/save" ,tags=["Interação com LLM"] ) # , response_model=InvoiceResponse
+async def extract_invoice_data_with_gemini_and_save(file: UploadFile = File(...), session = Depends(get_session)):
+    """
+    Recebe uma imagem de nota fiscal, extrai CNPJ, data e valor total e grava na base de notas.
+    """
+    return await extract_invoice_data(file,True,session)
+
+@app.post("/invoices/extract/check" ,tags=["Interação com LLM"] ) # , response_model=InvoiceResponse
+async def extract_invoice_data_with_gemini_for_checking(file: UploadFile = File(...), session = Depends(get_session)):
+    """
+    Recebe uma imagem de nota fiscal, extrai CNPJ, data e valor total. Não grava em base de dados.
+    """
+    return await extract_invoice_data(file,False,session)
+
+#@app.post("/invoices/extract" ,tags=["Interação com LLM"]) # , response_model=InvoiceResponse
+async def extract_invoice_data(file: UploadFile, save: bool, session):
     """
     Recebe uma imagem de nota fiscal, extrai CNPJ, data e valor total.
     """
-
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="O arquivo enviado não é uma imagem.")
 
@@ -113,7 +140,7 @@ async def extract_invoice_data_with_gemini(file: UploadFile = File(...), session
             logger.warning("usando config...")
             prompt = itemObject.prompt
         else:
-            prompt = "Analise esta imagem de nota fiscal. Extraia as seguintes informações e formate-as como um objeto JSON. Se um dado não for encontrado, use `null`. Não adicione nenhum texto antes ou depois do JSON. Certifique-se de que o JSON é válido: {\"cnpj\":[CNPJ da empresa emissora, apenas números], \"data\":[Data da emissão no formato DD/MM/AAAA], \"valor\":[Valor total pago da nota fiscal, em formato numérico com ponto como separador decimal, ex: 123.45]} "
+            prompt = "Analise esta imagem de nota fiscal. Extraia as seguintes informações e formate-as como um objeto JSON. Se um dado não for encontrado, use `null`. Não adicione nenhum texto antes ou depois do JSON. Certifique-se de que o JSON é válido: {\"cnpj\":[CNPJ ou NPJ ou IPJ ou PJ ou P depois do :, com 14 números ou mais], \"data\":[Data da emissão no formato DD/MM/AAAA], \"valor\":[Valor total pago da nota fiscal, em formato numérico com ponto como separador decimal, ex: 123.45]} "
             logger.warning("usando default...")
            
         prompt_parts =  [prompt, "Imagem:", image_parts[0] ]
@@ -161,20 +188,30 @@ async def extract_invoice_data_with_gemini(file: UploadFile = File(...), session
         #logger.warning("Verificando Hash existe: "+hash)
         encontrou = session.query(Invoice).filter_by(imagem_hash=hash).all()
         #logger.warning(encontrou)
-        
+
+        status="CHECKING"
+
         if encontrou:
+            status=encontrou[0].status
+        else:
+            if save:
+                status="PEDENTE"
+
+        if save and encontrou:
             raise HTTPException(status_code=400, detail="O arquivo enviado já está cadastrado.")
 
         invoiceNew = Invoice(
             cnpj=json_data.get('cnpj'), 
             data_emissao=json_data.get('data'), 
             valor_total=json_data.get('valor'),
-            imagem_hash=hash
+            imagem_hash=hash,
+            status=status
         )
 
-        session.add(invoiceNew)
-        session.commit()
-        session.refresh(invoiceNew)
+        if save:
+            session.add(invoiceNew)
+            session.commit()
+            session.refresh(invoiceNew)
 
         return invoiceNew
     
@@ -231,7 +268,7 @@ def delete_invoice(id:int, session = Depends(get_session)):
 @app.put("/configuration",tags=["Configuração"])
 def update_configuration(config:ConfigurationRequest, session = Depends(get_session)):
     """
-    Atualiza Prompt de extração de dados.
+    Atualiza Prompt de extração de dados. Prompt default: Analise esta imagem de nota fiscal. Extraia as seguintes informações e formate-as como um objeto JSON. Se um dado não for encontrado, use `null`. Não adicione nenhum texto antes ou depois do JSON. Certifique-se de que o JSON é válido: {\"cnpj\":[CNPJ da empresa emissora, apenas números], \"data\":[Data da emissão no formato DD/MM/AAAA], \"valor\":[Valor total pago da nota fiscal, em formato numérico com ponto como separador decimal, ex: 123.45]} 
     """
     configUpdated = session.query(Configurations).first()
 

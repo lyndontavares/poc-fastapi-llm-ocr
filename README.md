@@ -1,7 +1,7 @@
 # poc-fastapi-llm
 POC Fastapi com Gemini
 
-## run
+## Run
 
 ```
 fastapi run app/main.py --port 80
