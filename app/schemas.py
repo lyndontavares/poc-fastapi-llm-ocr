@@ -1,3 +1,4 @@
+from typing import List
 from pydantic import BaseModel
 
 # --- corpo da requisição ---
@@ -27,4 +28,20 @@ class InvoiceRequest(BaseModel):
     cnpj: str | None = None
     data_emissao: str | None = None
     valor_total: float | None = None
+    imagem_hash: str| None = None  
     status: str| None = None # Novo campo para o status da persistência
+
+# Esquemas para a requisição e resposta
+class Message(BaseModel):
+    role: str  # Ex: "system", "user", "assistant"
+    content: str
+
+class ChatRequest(BaseModel):
+    model: str = "mistral-medium"
+    messages: List[Message]
+    temperature: float = 0.7
+    max_tokens: int = 300
+    stream: bool = False
+
+class ChatResponse(BaseModel):
+    response: dict

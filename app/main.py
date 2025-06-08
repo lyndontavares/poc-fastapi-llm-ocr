@@ -5,11 +5,14 @@ from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form
 import google.generativeai as genai
 from app.database import Base, engine, SessionLocal
 from sqlalchemy.orm import Session 
-from app.schemas import ConfigurationRequest, ConfigurationResponse, InvoiceRequest, InvoiceResponse, PromptRequest
+from app.schemas import ChatRequest, ChatResponse, ConfigurationRequest, ConfigurationResponse, InvoiceRequest, InvoiceResponse, PromptRequest
 from app.models import Configurations, Invoice
 import logging
 from app.hash_util import gerar_hash_imagem # <-- Import logging
 from fastapi.middleware.cors import CORSMiddleware
+
+import requests  # Certo!
+from requests.exceptions import RequestException  # Importa a exceção corretamente
 
 # --- Logging Setup ---
 logger = logging.getLogger(__name__)
@@ -19,6 +22,7 @@ load_dotenv()
 # --- Configuração do Google Gemini API ---
 # API_KEY = "SUA_CHAVE_DA_API_GOOGLE_AQUI"
 API_KEY = os.getenv("GOOGLE_API_KEY")
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 
 if not API_KEY:
     raise ValueError(
@@ -66,7 +70,51 @@ app.add_middleware(
 )
 
 # --- Endpoint da API ---
-@app.post("/chat",tags=["Interação com LLM"])
+
+@app.post("/chat/mistral", response_model=ChatResponse,tags=["Interação com LLM"])
+def chat_with_mistral(request_data: ChatRequest):
+    """
+    Endpoint que recebe uma requisição de chat e encaminha para a API do Mistral. (https://mistral.ai/)
+    
+    Exemplo:
+
+        {
+            "model": "mistral-medium",
+            "messages": [
+                {
+                "role": "system",
+                "content": "Você é um assistente útil."
+                },
+                {
+                "role": "user",
+                "content": "Explique a teoria da relatividade em termos simples."
+                }
+            ],
+            "temperature": 0.7,
+            "top_p": 1,
+            "max_tokens": 256,
+            "stream": false
+        }
+
+    """
+    url = "https://api.mistral.ai/v1/chat/completions"  
+    headers = {
+        "Authorization": f"Bearer {MISTRAL_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = request_data.dict()
+    
+    try:
+        resp = requests.post(url, headers=headers, json=payload)
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Erro na requisição para a API do Mistral: {e}")
+    
+    data = resp.json()
+    return ChatResponse(response=data)
+
+
+@app.post("/chat/gemini",tags=["Interação com LLM"])
 async def chat_with_gemini(request: PromptRequest):
     """
     Recebe um prompt de texto, interage com o modelo Google Gemini e retorna a resposta.
@@ -239,6 +287,26 @@ def get_invoice(id:int, session: Session = Depends(get_session)):
     item = session.query(Invoice).get(id)
     return item
 
+@app.post("/invoices/add",tags=["Crud"])
+def create_invoice(invoice:InvoiceRequest, session = Depends(get_session)):
+    """
+    Adiciona um novo documento.
+    """
+    logger.warning(">>>")
+    logger.warning(invoice)
+
+    itemObject = Invoice(
+        cnpj= invoice.cnpj,
+        data_emissao= invoice.data_emissao, 
+        valor_total= invoice.valor_total, 
+        imagem_hash= invoice.imagem_hash, 
+        status= "PROCESSADO"
+    )
+    session.add(itemObject)
+    session.commit()
+    session.refresh(itemObject)
+    return itemObject
+
 @app.put("/invoices/{id}",tags=["Crud"])
 def update_invoice(id:int, invoice:InvoiceRequest, session = Depends(get_session)):
     """
@@ -251,7 +319,6 @@ def update_invoice(id:int, invoice:InvoiceRequest, session = Depends(get_session
     itemObject.status = invoice.status 
     session.commit()
     return itemObject
-
 
 @app.delete("/invoices/{id}",tags=["Crud"])
 def delete_invoice(id:int, session = Depends(get_session)):
@@ -268,14 +335,16 @@ def delete_invoice(id:int, session = Depends(get_session)):
 @app.put("/configuration",tags=["Configuração"])
 def update_configuration(config:ConfigurationRequest, session = Depends(get_session)):
     """
-    Atualiza Prompt de extração de dados. Prompt default: Analise esta imagem de nota fiscal. Extraia as seguintes informações e formate-as como um objeto JSON. Se um dado não for encontrado, use `null`. Não adicione nenhum texto antes ou depois do JSON. Certifique-se de que o JSON é válido: {\"cnpj\":[CNPJ da empresa emissora, apenas números], \"data\":[Data da emissão no formato DD/MM/AAAA], \"valor\":[Valor total pago da nota fiscal, em formato numérico com ponto como separador decimal, ex: 123.45]} 
+    Atualiza Prompt de extração de dados. Prompt default: Analise esta imagem de nota fiscal. Extraia as seguintes informações e formate-as como um objeto JSON. Se um dado não for encontrado, use `null`. Não adicione nenhum texto antes ou depois do JSON. Certifique-se de que o JSON é válido: {\\\\"cnpj\\\\":[CNPJ da empresa emissora, apenas números], \\\\"data\\\\":[Data da emissão no formato DD/MM/AAAA], \\\\"valor\\\\":[Valor total pago da nota fiscal, em formato numérico com ponto como separador decimal, ex: 123.45]} 
     """
     configUpdated = session.query(Configurations).first()
 
     if configUpdated:
         configUpdated.prompt = config.prompt 
+        logger.warning("Encontrou:"+configUpdated.prompt)
     else:   
         configUpdated = Configurations(prompt=config.prompt)
+        logger.warning("Novo:"+configUpdated.prompt)
 
     session.add(configUpdated)
     session.commit()
