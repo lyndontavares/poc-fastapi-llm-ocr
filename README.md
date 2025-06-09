@@ -14,10 +14,10 @@ fastapi run app/main.py --port 8000
 uvicorn app.main:app --reload --port 8000
 ```
 
-## Mistral 
+## LLM Mistral 
 
 para testar endpoit invoices/extract/mistral, instale:
-s
+
 ```
 sudo apt update
 sudo apt install tesseract-ocr -y
