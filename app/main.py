@@ -1,7 +1,10 @@
+import base64
 import os
+import shutil
 from dotenv import load_dotenv
 import json
 from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form  
+from fastapi.responses import JSONResponse
 import google.generativeai as genai
 from app.database import Base, engine, SessionLocal
 from sqlalchemy.orm import Session 
@@ -114,6 +117,55 @@ def chat_with_mistral(request_data: ChatRequest):
     return ChatResponse(response=data)
 
 
+@app.post("/invoices/extract/mistral", response_model=ChatResponse,tags=["Interação com LLM"])
+async def extract_invoice_data_with_mistral(
+    file: UploadFile = File(...),
+):
+    """
+    Recebe uma imagem de nota fiscal, extrai CNPJ, data e valor total e grava na base de notas.
+    """    
+    # Salvar o arquivo localmente
+    file_content = await file.read()
+    file_b64 = base64.b64encode(file_content).decode("utf-8")
+
+      # Prompt
+    prompt = (
+        "Analise a imagem codificada abaixo (em base64, formato " + file.content_type + "). "
+        "Extraia e retorne um JSON válido com as seguintes chaves: "
+        "\"cnpj\", \"data\" (formato DD/MM/AAAA), e \"valor\" (formato 123.45). "
+        "Use null se algum dado não for encontrado. Não adicione texto fora do JSON."
+    )
+
+    # Corpo da requisição
+    payload = {
+        "model": "mistral-medium",  # ou o modelo que está usando
+        "messages": [
+            {"role": "user", "content": prompt},
+            {"role": "user", "content": f"<base64>{file_b64}</base64>"}
+        ]
+    }
+
+    headers = {
+        "Authorization": f"Bearer {MISTRAL_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(
+        "https://api.mistral.ai/v1/chat/completions",
+        json=payload,
+        headers=headers
+    )
+
+    if response.status_code != 200:
+        return JSONResponse(
+            status_code=response.status_code,
+            content={"error": "Erro ao enviar para o modelo", "details": response.text}
+        )
+
+    return response.json()
+
+
+
 @app.post("/chat/gemini",tags=["Interação com LLM"])
 async def chat_with_gemini(request: PromptRequest):
     """
@@ -157,7 +209,6 @@ async def extract_invoice_data_with_gemini_for_checking(file: UploadFile = File(
     """
     return await extract_invoice_data(file,False,session)
 
-#@app.post("/invoices/extract" ,tags=["Interação com LLM"]) # , response_model=InvoiceResponse
 async def extract_invoice_data(file: UploadFile, save: bool, session):
     """
     Recebe uma imagem de nota fiscal, extrai CNPJ, data e valor total.

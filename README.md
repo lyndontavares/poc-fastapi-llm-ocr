@@ -4,7 +4,7 @@ POC Fastapi com Gemini. Criado para o segundo trabalho do curso da I1A2 em Junho
 ## Run
 
 ```
-fastapi run app/main.py --port 80
+fastapi run app/main.py --port 8000
 ```
 
 ## Live reload
