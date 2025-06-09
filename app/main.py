@@ -1,6 +1,4 @@
-import base64
 import os
-import shutil
 from dotenv import load_dotenv
 import json
 from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form  
@@ -13,9 +11,11 @@ from app.models import Configurations, Invoice
 import logging
 from app.hash_util import gerar_hash_imagem # <-- Import logging
 from fastapi.middleware.cors import CORSMiddleware
-
 import requests  # Certo!
 from requests.exceptions import RequestException  # Importa a exceção corretamente
+from PIL import Image
+import pytesseract
+
 
 # --- Logging Setup ---
 logger = logging.getLogger(__name__)
@@ -26,6 +26,7 @@ load_dotenv()
 # API_KEY = "SUA_CHAVE_DA_API_GOOGLE_AQUI"
 API_KEY = os.getenv("GOOGLE_API_KEY")
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
+MISTRAL_API_URL=os.getenv("MISTRAL_API_URL")
 
 if not API_KEY:
     raise ValueError(
@@ -100,7 +101,7 @@ def chat_with_mistral(request_data: ChatRequest):
         }
 
     """
-    url = "https://api.mistral.ai/v1/chat/completions"  
+    url = MISTRAL_API_URL 
     headers = {
         "Authorization": f"Bearer {MISTRAL_API_KEY}",
         "Content-Type": "application/json"
@@ -117,32 +118,59 @@ def chat_with_mistral(request_data: ChatRequest):
     return ChatResponse(response=data)
 
 
-@app.post("/invoices/extract/mistral", response_model=ChatResponse,tags=["Interação com LLM"])
+@app.post("/invoices/extract/mistral",tags=["Interação com LLM"]) # , response_model=InvoiceResponse
 async def extract_invoice_data_with_mistral(
     file: UploadFile = File(...),
 ):
     """
     Recebe uma imagem de nota fiscal, extrai CNPJ, data e valor total e grava na base de notas.
     """    
-    # Salvar o arquivo localmente
-    file_content = await file.read()
-    file_b64 = base64.b64encode(file_content).decode("utf-8")
+    # Salvar temporariamente
+    temp_path = f"temp_{file.filename}"
+    with open(temp_path, "wb") as f:
+        f.write(await file.read())
 
-      # Prompt
-    prompt = (
-        "Analise a imagem codificada abaixo (em base64, formato " + file.content_type + "). "
-        "Extraia e retorne um JSON válido com as seguintes chaves: "
-        "\"cnpj\", \"data\" (formato DD/MM/AAAA), e \"valor\" (formato 123.45). "
-        "Use null se algum dado não for encontrado. Não adicione texto fora do JSON."
-    )
+    # Abrir imagem com Pillow e extrair texto via pytesseract
+    image = Image.open(temp_path)
 
-    # Corpo da requisição
+    logger.warning(">>> Salvou  imagem")
+
+    texto_ocr = pytesseract.image_to_string(image, lang="por")
+
+    # gera hash imagem
+    # hash = gerar_hash_imagem(image)
+
+    os.remove(temp_path)
+
+    logger.warning(">>> Feito OCR")
+
+    # Prompt para LLM
+    prompt = f"""
+        Você é um assistente para extração de dados de notas fiscais brasileiras.
+
+        Texto extraído via OCR:
+        ---
+        {texto_ocr}
+        ---
+
+        Extraia os seguintes campos em formato JSON:
+
+        {{
+        "cnpj": "somente números",
+        "data": "DD/MM/AAAA",
+        "valor": número decimal com ponto (ex: 123.45)
+        }}
+
+        Se um campo não for encontrado, use null. Retorne apenas o JSON.
+        """
+
     payload = {
-        "model": "mistral-medium",  # ou o modelo que está usando
+        "model": "mistral-medium",
         "messages": [
-            {"role": "user", "content": prompt},
-            {"role": "user", "content": f"<base64>{file_b64}</base64>"}
-        ]
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.3,
+        "max_tokens": 400
     }
 
     headers = {
@@ -150,19 +178,58 @@ async def extract_invoice_data_with_mistral(
         "Content-Type": "application/json"
     }
 
-    response = requests.post(
-        "https://api.mistral.ai/v1/chat/completions",
-        json=payload,
-        headers=headers
-    )
+    response = requests.post(MISTRAL_API_URL, headers=headers, json=payload)
 
     if response.status_code != 200:
-        return JSONResponse(
-            status_code=response.status_code,
-            content={"error": "Erro ao enviar para o modelo", "details": response.text}
+        return JSONResponse(status_code=500, content={"erro": "Falha no modelo", "detalhe": response.text})
+
+    content = response.json()["choices"][0]["message"]["content"]
+
+
+
+    # Tenta extrair o JSON da resposta do LLM
+    json_data = {}
+    raw_llm_response = content
+    try:
+        # Tenta encontrar o bloco JSON na resposta
+        start_index = raw_llm_response.find("```json")
+        end_index = raw_llm_response.find("```", start_index + 1)
+        
+        if start_index != -1 and end_index != -1:
+            json_string = raw_llm_response[start_index + len("```json"):end_index].strip()
+            json_data = json.loads(json_string)
+        else:
+            # Se não encontrar o bloco ```json```, tenta parsear a resposta completa
+            json_data = json.loads(raw_llm_response.strip())
+
+    except json.JSONDecodeError as e:
+        print(f"Não foi possível parsear o JSON da resposta do LLM: {raw_llm_response}. Erro: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao parsear a resposta do modelo. Resposta recebida: {raw_llm_response.strip()}"
         )
 
-    return response.json()
+    # Converte o valor para float se não for nulo
+    if 'valor' in json_data and json_data['valor'] is not None:
+        try:
+            json_data['valor'] = float(json_data['valor'])
+        except ValueError:
+            json_data['valor'] = None # Ou manter como string se a conversão falhar
+    
+    invoiceNew = Invoice(
+        cnpj=json_data.get('cnpj'), 
+        data_emissao=json_data.get('data'), 
+        valor_total=json_data.get('valor'),
+        #imagem_hash=hash,
+        status="CHECKING"
+    )
+
+    return invoiceNew
+ 
+    # try:
+    #     return JSONResponse(content=eval(content))
+    # except Exception:
+    #     return {"resposta_nao_tratada": content}
 
 
 

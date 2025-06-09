@@ -5,18 +5,19 @@ POC Fastapi com Gemini. Criado para o segundo trabalho do curso da I1A2 em Junho
 
 ```
 fastapi run app/main.py --port 8000
+
 ```
 
 ## Live reload
 
 ```
- uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8000
 ```
 
 ## Acessar Swagger
 
 ```
-http://localhost/docs#/default
+http://127.0.0.1:8000/docs#/
 ```
 
 ## API Swagger
