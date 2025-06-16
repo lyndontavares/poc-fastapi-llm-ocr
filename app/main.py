@@ -47,7 +47,7 @@ def get_session():
         session.close()
 
 origins = [
-        "http://localhost:4200",  # frontend URL
+        "http://localhost:4200","http://localhost:9000"  # frontend URL
 ]
 
 app = FastAPI(
@@ -67,7 +67,7 @@ app = FastAPI(
 
 app.add_middleware(
         CORSMiddleware,
-        allow_origins=origins,
+        allow_origins=["*"],#origins,
         #allow_credentials=True,
         allow_methods=["*"],  # Allows all HTTP methods
         allow_headers=["*"],  # Allows all headers
@@ -388,7 +388,7 @@ async def extract_invoice_data(file: UploadFile, save: bool, session):
         )
 
  
-@app.get("/invoices",tags=["Crud"])
+@app.get("/invoices",tags=["Crud"], response_model=list[InvoiceResponse])
 def get_invoices(session: Session = Depends(get_session)):
     """
     Retorna lista de documentos extraidos.
