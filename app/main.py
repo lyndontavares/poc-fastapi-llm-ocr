@@ -35,9 +35,9 @@ if not API_KEY:
     )
 
 genai.configure(api_key=API_KEY)
-GEMINI_MODEL = "gemini-2.0-flash"
-# Modelo para processamento de imagem  gemini-pro-vision gemini-1.5-flash
-GEMINI_PRO_VISION_MODEL = "gemini-1.5-flash"
+GEMINI_MODEL = "models/gemini-2.5-flash"
+# Modelo para processamento de imagem 
+GEMINI_PRO_VISION_MODEL = "models/gemini-2.5-flash"
 
 Base.metadata.create_all(engine)
 
@@ -509,3 +509,4 @@ def get_configuration(session=Depends(get_session)):
     # session.close()
 
     return config
+
