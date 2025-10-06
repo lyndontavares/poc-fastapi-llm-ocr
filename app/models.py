@@ -13,7 +13,9 @@ class Configurations(Base):
     __tablename__ = 'configurations'
     id = Column(Integer, primary_key=True)
     prompt = Column(String(2048))
-
+    api_url=  Column(String(256))
+    api_key=  Column(String(256))
+    llm_model=  Column(String(128))
 
 class Item(Base):
     __tablename__ = 'items'

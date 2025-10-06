@@ -9,11 +9,20 @@ class PromptRequest(BaseModel):
 
 
 class ConfigurationRequest(BaseModel):
+    id: int
     prompt: str
+    api_url: str
+    api_key: str
+    llm_model: str
+
 
 
 class ConfigurationResponse(BaseModel):
+    id: int
     prompt: str
+    api_url: str
+    api_key: str
+    llm_model: str
 
 # --- Dados de Nota Fiscal ---
 
