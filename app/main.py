@@ -1,3 +1,4 @@
+import io
 import os
 from dotenv import load_dotenv
 import json
@@ -16,10 +17,13 @@ from requests.exceptions import RequestException  # Importa a exceção corretam
 from PIL import Image
 import pytesseract
 import xml.etree.ElementTree as ET
+from PIL import Image, ImageDraw, ImageFont
 
 
 # --- Logging Setup ---
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn")
+logger.setLevel(logging.INFO)
+logger.info(f"--- Iniciando FastAPI com Google Generative AI --")
 
 load_dotenv()
 
@@ -290,7 +294,128 @@ async def extract_invoice_data_with_gemini_for_checking(file: UploadFile = File(
     return await extract_invoice_data(file, False, session)
 
 
-async def extract_invoice_data(file: UploadFile, save: bool, session: Session):
+async def extract_invoice_data_old(file: UploadFile, save: bool, session):
+    """
+    Recebe uma imagem de nota fiscal, extrai CNPJ, data e valor total.
+    """
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=400, detail="O arquivo enviado não é uma imagem.")
+
+    try:
+        # Carrega a imagem para o formato que o Gemini espera
+        image_data = await file.read()
+        image_parts = [
+            {
+                "mime_type": file.content_type,
+                "data": image_data
+            }
+        ]
+
+        # Prepara o modelo Gemini Vision
+        model_vision = genai.GenerativeModel(GEMINI_PRO_VISION_MODEL)
+
+        # Prompt de engenharia para extração de dados em JSON
+        # É crucial pedir o formato JSON e instruir para usar 'null' se o dado não for encontrado.
+
+        itemObject = session.query(Configurations).first()
+
+        prompt = ""
+        if itemObject and itemObject.prompt:
+            logger.warning("usando config...")
+            prompt = itemObject.prompt
+        else:
+            prompt = "Analise esta imagem de nota fiscal. Extraia as seguintes informações e formate-as como um objeto JSON. Se um dado não for encontrado, use `null`. Não adicione nenhum texto antes ou depois do JSON. Certifique-se de que o JSON é válido: {\"cnpj\":[CNPJ ou NPJ ou IPJ ou PJ ou P depois do :, com 14 números ou mais], \"data\":[Data da emissão no formato DD/MM/AAAA], \"valor\":[Valor total pago da nota fiscal, em formato numérico com ponto como separador decimal, ex: 123.45]} "
+            logger.warning("usando default...")
+
+        prompt_parts = [prompt, "Imagem:", image_parts[0]]
+
+        # Gera o conteúdo
+        response = model_vision.generate_content(prompt_parts)
+
+        # O Gemini pode retornar texto em partes. Juntamos tudo.
+        raw_llm_response = "".join(
+            [part.text for part in response.parts if hasattr(part, 'text')])
+
+        # Tenta extrair o JSON da resposta do LLM
+        json_data = {}
+        try:
+            # Tenta encontrar o bloco JSON na resposta
+            start_index = raw_llm_response.find("```json")
+            end_index = raw_llm_response.find("```", start_index + 1)
+
+            if start_index != -1 and end_index != -1:
+                json_string = raw_llm_response[start_index +
+                                               len("```json"):end_index].strip()
+                json_data = json.loads(json_string)
+            else:
+                # Se não encontrar o bloco ```json```, tenta parsear a resposta completa
+                json_data = json.loads(raw_llm_response.strip())
+
+        except json.JSONDecodeError as e:
+            print(
+                f"Não foi possível parsear o JSON da resposta do LLM: {raw_llm_response}. Erro: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Erro ao parsear a resposta do modelo. Resposta recebida: {raw_llm_response.strip()}"
+            )
+
+        # Converte o valor para float se não for nulo
+        if 'valor' in json_data and json_data['valor'] is not None:
+            try:
+                json_data['valor'] = float(json_data['valor'])
+            except ValueError:
+                # Ou manter como string se a conversão falhar
+                json_data['valor'] = None
+
+        if 'tipo_despesa' not in json_data:
+            json_data['tipo_despesa'] = ''
+
+        # gera hash imagem
+        hash = gerar_hash_imagem(image_data)
+
+        # persistência
+
+        # logger.warning("Verificando Hash existe: "+hash)
+        encontrou = session.query(Invoice).filter_by(imagem_hash=hash).all()
+        # logger.warning(encontrou)
+
+        status = "CHECKING"
+
+        if encontrou:
+            status = encontrou[0].status
+        else:
+            if save:
+                status = "PEDENTE"
+
+        if save and encontrou:
+            raise HTTPException(
+                status_code=400, detail="O arquivo enviado já está cadastrado.")
+
+        invoiceNew = Invoice(
+            tipo_despesa=json_data.get('tipo_despesa'),
+            cnpj=json_data.get('cnpj'),
+            data_emissao=json_data.get('data'),
+            valor_total=json_data.get('valor'),
+            imagem_hash=hash,
+            status=status
+        )
+
+        if save:
+            session.add(invoiceNew)
+            session.commit()
+            session.refresh(invoiceNew)
+
+        return invoiceNew
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao processar a imagem da nota fiscal: {str(e)}"
+        )
+
+
+async def extract_invoice_data_old_2(file: UploadFile, save: bool, session: Session):
     """
     Recebe uma nota fiscal (imagem, XML ou PDF), extrai CNPJ, data e valor total.
     """
@@ -462,6 +587,441 @@ async def extract_invoice_data(file: UploadFile, save: bool, session: Session):
             if save:
                 raise HTTPException(
                     status_code=400, detail="O arquivo já foi cadastrado anteriormente."
+                )
+            else:
+                return existente
+
+        status = "PENDENTE" if save else "CHECKING"
+
+        invoice = Invoice(
+            tipo_despesa=json_data.get("tipo_despesa", ""),
+            cnpj=json_data.get("cnpj"),
+            data_emissao=json_data.get("data"),
+            valor_total=json_data.get("valor"),
+            imagem_hash=hash_value,
+            status=status,
+        )
+
+        if save:
+            session.add(invoice)
+            session.commit()
+            session.refresh(invoice)
+
+        return invoice
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Erro ao processar nota fiscal: {str(e)}"
+        )
+
+
+async def extract_invoice_data3(file: UploadFile, save: bool, session: Session):
+    """
+    Recebe uma nota fiscal (imagem, XML ou PDF), converte XML em imagem e extrai
+    CNPJ, data, valor total e tipo_despesa via Gemini Vision.
+    """
+    content_type = file.content_type.lower()
+
+    try:
+        # ============================================================
+        # CASO 1 - XML → renderiza em imagem e usa lógica de IMAGEM
+        # ============================================================
+        if content_type in ["text/xml", "application/xml"]:
+            logger.info(">>>image/png from XML inicio")
+            xml_bytes = await file.read()
+            logger.info(">>>image/png from XML read file")
+
+            try:
+                # Valida o XML antes
+                root = ET.fromstring(xml_bytes)
+            except ET.ParseError as e:
+                raise HTTPException(
+                    status_code=400, detail=f"XML inválido: {e}")
+
+            # Renderiza texto XML em imagem (para Gemini Vision)
+            xml_text = xml_bytes.decode("utf-8", errors="ignore")
+            lines = xml_text.splitlines()
+            max_width = 1200
+            line_height = 25
+
+            # Gera imagem branca
+            img_height = max(800, len(lines) * line_height)
+            img = Image.new("RGB", (max_width, img_height), "white")
+            draw = ImageDraw.Draw(img)
+            logger.info(">>>image/png ImageDraw criado")
+
+            try:
+                # Fonte padrão (sem precisar do TTF local)
+                font = ImageFont.load_default()
+            except Exception:
+                font = None
+
+            y = 10
+            for line in lines[:200]:  # limita linhas longas
+                draw.text((10, y), line[:200], fill="black", font=font)
+                y += line_height
+
+            img_bytes = io.BytesIO()
+            img.save(img_bytes, format="PNG")
+            image_data = img_bytes.getvalue()
+            content_type = "image/png"
+
+            logger.info(">>>image/png from XML criada")
+
+        # ============================================================
+        # CASO 2 - IMAGEM (via Gemini Vision)
+        # ============================================================
+        elif content_type.startswith("image/"):
+            image_data = await file.read()
+
+        # ============================================================
+        # CASO 3 - PDF (OCR via Gemini Vision)
+        # ============================================================
+        elif content_type == "application/pdf":
+            pdf_data = await file.read()
+            pdf_parts = [{"mime_type": content_type, "data": pdf_data}]
+
+            itemObject = session.query(Configurations).first()
+            prompt = (
+                itemObject.prompt
+                if itemObject and itemObject.prompt
+                else (
+                    "Leia este PDF de nota fiscal (OCR) e extraia CNPJ, data de emissão, "
+                    "valor total e tipo de despesa (ex: combustível, alimentação, hospedagem). "
+                    "Responda somente em JSON: "
+                    '{"cnpj":"...", "data":"DD/MM/AAAA", "valor":123.45, "tipo_despesa":"..."}'
+                )
+            )
+
+            model_vision = genai.GenerativeModel(GEMINI_PRO_VISION_MODEL)
+            response = model_vision.generate_content(
+                [prompt, "Documento:", pdf_parts[0]])
+
+            raw_response = "".join(
+                [part.text for part in response.parts if hasattr(part, "text")]
+            ).strip()
+
+            try:
+                if "```json" in raw_response:
+                    json_text = raw_response.split(
+                        "```json")[1].split("```")[0].strip()
+                    json_data = json.loads(json_text)
+                else:
+                    json_data = json.loads(raw_response)
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Erro ao decodificar JSON da resposta OCR: {raw_response}",
+                )
+
+            if "valor" in json_data and json_data["valor"] is not None:
+                try:
+                    json_data["valor"] = float(json_data["valor"])
+                except ValueError:
+                    json_data["valor"] = None
+
+            if "tipo_despesa" not in json_data:
+                json_data["tipo_despesa"] = ""
+
+            hash_value = gerar_hash_imagem(pdf_data)
+            # vai direto pro fim
+            invoice_data = json_data
+
+        # ============================================================
+        # IMAGEM (ou XML convertido em imagem)
+        # ============================================================
+        if content_type.startswith("image/"):
+
+            logger.info(">>>image/png from IMAGEM inicio")
+
+            image_parts = [{"mime_type": content_type, "data": image_data}]
+
+            itemObject = session.query(Configurations).first()
+            prompt = (
+                itemObject.prompt
+                if itemObject and itemObject.prompt
+                else (
+                    "Analise esta imagem de nota fiscal e extraia CNPJ, data de emissão, "
+                    "valor total e tipo de despesa (ex: combustível, alimentação, hospedagem). "
+                    "Responda **somente** com JSON: "
+                    '{"cnpj":"...", "data":"DD/MM/AAAA", "valor":123.45, "tipo_despesa":"..."}'
+                )
+            )
+
+            model_vision = genai.GenerativeModel(GEMINI_PRO_VISION_MODEL)
+            response = model_vision.generate_content(
+                [prompt, "Imagem:", image_parts[0]])
+
+            raw_response = "".join(
+                [part.text for part in response.parts if hasattr(part, "text")]
+            ).strip()
+
+            try:
+                if "```json" in raw_response:
+                    json_text = raw_response.split(
+                        "```json")[1].split("```")[0].strip()
+                    json_data = json.loads(json_text)
+                else:
+                    json_data = json.loads(raw_response)
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Erro ao decodificar JSON da resposta Vision: {raw_response}",
+                )
+
+            if "valor" in json_data and json_data["valor"] is not None:
+                try:
+                    json_data["valor"] = float(json_data["valor"])
+                except ValueError:
+                    json_data["valor"] = None
+
+            if "tipo_despesa" not in json_data:
+                json_data["tipo_despesa"] = ""
+
+            hash_value = gerar_hash_imagem(image_data)
+            invoice_data = json_data
+
+        # ============================================================
+        # OUTROS FORMATOS
+        # ============================================================
+        elif not content_type.startswith(("image/", "application/pdf")):
+            raise HTTPException(
+                status_code=400,
+                detail="Tipo de arquivo não suportado. Envie imagem, PDF ou XML.",
+            )
+
+        # ============================================================
+        # PERSISTÊNCIA E DUPLICIDADE
+        # ============================================================
+        logger.info(">>>Persistencia inicio")
+        existente = session.query(Invoice).filter_by(
+            imagem_hash=hash_value).first()
+
+        logger.info(">>>Persistencia verificado existente")
+        if existente:
+            if save:
+                raise HTTPException(
+                    status_code=400,
+                    detail="O arquivo já foi cadastrado anteriormente."
+                )
+            else:
+                return existente
+
+        status = "PENDENTE" if save else "CHECKING"
+
+        invoice = Invoice(
+            tipo_despesa=invoice_data.get("tipo_despesa", ""),
+            cnpj=invoice_data.get("cnpj"),
+            data_emissao=invoice_data.get("data"),
+            valor_total=invoice_data.get("valor"),
+            imagem_hash=hash_value,
+            status=status,
+        )
+
+        logger.info(">>>Persistencia salvar")
+        if save:
+            session.add(invoice)
+            session.commit()
+            session.refresh(invoice)
+
+        logger.info(">>>Persistencia retorno")
+        logger.info("Invoice to json"+str(invoice.__dict__))
+        return invoice
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao processar nota fiscal: {str(e)}"
+        )
+
+
+async def extract_invoice_data(file: UploadFile, save: bool, session: Session):
+    """
+    Recebe uma nota fiscal (imagem, XML ou PDF),
+    extrai CNPJ, data, valor total e tipo_despesa (classificação LLM unificada).
+    """
+    content_type = file.content_type.lower()
+
+    try:
+        # ============================================================
+        # CASO 1 - XML (extração e classificação via LLM)
+        # ============================================================
+        if content_type in ["text/xml", "application/xml"]:
+            xml_bytes = await file.read()
+            xml_text = xml_bytes.decode("utf-8", errors="ignore")
+
+            # Prompt consistente com IMAGEM e PDF
+            itemObject = session.query(Configurations).first()
+            prompt = (
+                itemObject.prompt
+                if itemObject and itemObject.prompt
+                else (
+                    "Analise o conteúdo a seguir (nota fiscal em formato XML) e extraia: "
+                    "CNPJ do emissor, data de emissão, valor total e classifique a despesa "
+                    "entre ALIMENTACAO, VEICULO ou ESCRITORIO. "
+                    "Responda SOMENTE em JSON estrito no formato:\n\n"
+                    '{"cnpj":"...", "data":"DD/MM/AAAA", "valor":123.45, "tipo_despesa":"...", "explicacao":"..."}'
+                )
+            )
+
+            model_text = genai.GenerativeModel(GEMINI_PRO_VISION_MODEL)
+            response = model_text.generate_content([prompt, "XML:", xml_text])
+
+            raw_response = "".join(
+                [part.text for part in response.parts if hasattr(part, "text")]
+            ).strip()
+
+            try:
+                # Extrai bloco JSON
+                if "```json" in raw_response:
+                    json_text = raw_response.split(
+                        "```json")[1].split("```")[0].strip()
+                    json_data = json.loads(json_text)
+                else:
+                    json_data = json.loads(raw_response)
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Erro ao decodificar JSON da resposta LLM (XML): {raw_response}",
+                )
+
+            # Conversão segura
+            if "valor" in json_data and json_data["valor"] is not None:
+                try:
+                    json_data["valor"] = float(json_data["valor"])
+                except ValueError:
+                    json_data["valor"] = None
+
+            if "tipo_despesa" not in json_data:
+                json_data["tipo_despesa"] = ""
+
+            hash_value = gerar_hash_imagem(xml_bytes)
+
+        # ============================================================
+        # CASO 2 - IMAGEM (via Gemini Vision)
+        # ============================================================
+        elif content_type.startswith("image/"):
+            image_data = await file.read()
+            image_parts = [{"mime_type": content_type, "data": image_data}]
+
+            itemObject = session.query(Configurations).first()
+            prompt = (
+                itemObject.prompt
+                if itemObject and itemObject.prompt
+                else (
+                    "Analise esta imagem de nota fiscal e extraia CNPJ, data, valor total "
+                    "e tipo de despesa (ALIMENTACAO, VEICULO, ESCRITORIO). "
+                    "Responda somente em JSON estrito. "
+                    '{"cnpj":"...", "data":"DD/MM/AAAA", "valor":123.45, "tipo_despesa":"...", "explicacao":"..."}'
+                )
+            )
+
+            model_vision = genai.GenerativeModel(GEMINI_PRO_VISION_MODEL)
+            response = model_vision.generate_content(
+                [prompt, "Imagem:", image_parts[0]])
+
+            raw_response = "".join(
+                [part.text for part in response.parts if hasattr(part, "text")]
+            ).strip()
+
+            try:
+                if "```json" in raw_response:
+                    json_text = raw_response.split(
+                        "```json")[1].split("```")[0].strip()
+                    json_data = json.loads(json_text)
+                else:
+                    json_data = json.loads(raw_response)
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Erro ao decodificar JSON da resposta Vision: {raw_response}",
+                )
+
+            if "valor" in json_data and json_data["valor"] is not None:
+                try:
+                    json_data["valor"] = float(json_data["valor"])
+                except ValueError:
+                    json_data["valor"] = None
+
+            if "tipo_despesa" not in json_data:
+                json_data["tipo_despesa"] = ""
+
+            hash_value = gerar_hash_imagem(image_data)
+
+        # ============================================================
+        # CASO 3 - PDF (OCR via Gemini Vision)
+        # ============================================================
+        elif content_type == "application/pdf":
+            pdf_data = await file.read()
+            pdf_parts = [{"mime_type": content_type, "data": pdf_data}]
+
+            itemObject = session.query(Configurations).first()
+            prompt = (
+                itemObject.prompt
+                if itemObject and itemObject.prompt
+                else (
+                    "Leia este PDF de nota fiscal e extraia CNPJ, data de emissão, valor total "
+                    "e tipo de despesa (ALIMENTACAO, VEICULO, ESCRITORIO). "
+                    "Responda somente em JSON estrito. "
+                    '{"cnpj":"...", "data":"DD/MM/AAAA", "valor":123.45, "tipo_despesa":"...", "explicacao":"..."}'
+                )
+            )
+
+            model_vision = genai.GenerativeModel(GEMINI_PRO_VISION_MODEL)
+            response = model_vision.generate_content(
+                [prompt, "Documento:", pdf_parts[0]])
+
+            raw_response = "".join(
+                [part.text for part in response.parts if hasattr(part, "text")]
+            ).strip()
+
+            try:
+                if "```json" in raw_response:
+                    json_text = raw_response.split(
+                        "```json")[1].split("```")[0].strip()
+                    json_data = json.loads(json_text)
+                else:
+                    json_data = json.loads(raw_response)
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Erro ao decodificar JSON da resposta OCR: {raw_response}",
+                )
+
+            if "valor" in json_data and json_data["valor"] is not None:
+                try:
+                    json_data["valor"] = float(json_data["valor"])
+                except ValueError:
+                    json_data["valor"] = None
+
+            if "tipo_despesa" not in json_data:
+                json_data["tipo_despesa"] = ""
+
+            hash_value = gerar_hash_imagem(pdf_data)
+
+        # ============================================================
+        # OUTROS FORMATOS
+        # ============================================================
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Tipo de arquivo não suportado. Envie imagem, PDF ou XML.",
+            )
+
+        # ============================================================
+        # PERSISTÊNCIA E DUPLICIDADE
+        # ============================================================
+        existente = session.query(Invoice).filter_by(
+            imagem_hash=hash_value).first()
+        if existente:
+            if save:
+                raise HTTPException(
+                    status_code=400,
+                    detail="O arquivo já foi cadastrado anteriormente."
                 )
             else:
                 return existente

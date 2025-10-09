@@ -13,9 +13,7 @@ class Configurations(Base):
     __tablename__ = 'configurations'
     id = Column(Integer, primary_key=True)
     prompt = Column(String(2048))
-    api_url=  Column(String(256))
-    api_key=  Column(String(256))
-    llm_model=  Column(String(128))
+
 
 class Item(Base):
     __tablename__ = 'items'
@@ -32,8 +30,3 @@ class Invoice(Base):
     valor_total = Column(String(64))
     status = Column(String(10), default="PENDENTE")  # PENDENTE / CONFERIDO
     imagem_hash = Column(String(64), unique=True)
-
-
-# https://dennisivy.com/fast-api-crud
-# https://www.sqlalchemy.org/
-# https://docs.sqlalchemy.org/en/20/tutorial/orm_data_manipulation.html
